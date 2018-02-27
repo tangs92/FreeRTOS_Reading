@@ -198,6 +198,10 @@ configIDLE_TASK_NAME in FreeRTOSConfig.h. */
 	/* A port optimised version is provided, call it only if the TCB being reset
 	is being referenced from a ready list.  If it is referenced from a delayed
 	or suspended list then it won't be in a ready list. */
+   /*
+   判断传入的任务控制块的优先级对应到就绪列表中的列表长度是不是0(还有没有其他任务)
+      如果相应的优先级下只有这么一个任务,那么去uxTopReadyPriority把要清除的优先级对应位清除了
+   */
 	#define taskRESET_READY_PRIORITY( uxPriority )														\
 	{																									\
 		if( listCURRENT_LIST_LENGTH( &( pxReadyTasksLists[ ( uxPriority ) ] ) ) == ( UBaseType_t ) 0 )	\
@@ -1122,13 +1126,17 @@ static void prvAddNewTaskToReadyList( TCB_t *pxNewTCB )
 	{
 	TCB_t *pxTCB;
 
-		taskENTER_CRITICAL();
+		taskENTER_CRITICAL();//进入临界区
 		{
 			/* If null is passed in here then it is the calling task that is
 			being deleted. */
-			pxTCB = prvGetTCBFromHandle( xTaskToDelete );
+			pxTCB = prvGetTCBFromHandle( xTaskToDelete );//根据传入的任务句柄获取任务控制块
 
 			/* Remove task from the ready list. */
+			/*
+			把任务从就绪列表中移除,对于使用了硬件方法做任务切换,
+			一个任务如果就绪了,就会在uxTopReadyPriority相应位置1(32位变量,每一位表示一个优先级)
+			*/
 			if( uxListRemove( &( pxTCB->xStateListItem ) ) == ( UBaseType_t ) 0 )
 			{
 				taskRESET_READY_PRIORITY( pxTCB->uxPriority );
@@ -1139,9 +1147,9 @@ static void prvAddNewTaskToReadyList( TCB_t *pxNewTCB )
 			}
 
 			/* Is the task waiting on an event also? */
-			if( listLIST_ITEM_CONTAINER( &( pxTCB->xEventListItem ) ) != NULL )
+			if( listLIST_ITEM_CONTAINER( &( pxTCB->xEventListItem ) ) != NULL )//如果一个任务在等待事件
 			{
-				( void ) uxListRemove( &( pxTCB->xEventListItem ) );
+				( void ) uxListRemove( &( pxTCB->xEventListItem ) );//把任务从事件列表中移除
 			}
 			else
 			{
@@ -1152,20 +1160,23 @@ static void prvAddNewTaskToReadyList( TCB_t *pxNewTCB )
 			detect that the task lists need re-generating.  This is done before
 			portPRE_TASK_DELETE_HOOK() as in the Windows port that macro will
 			not return. */
-			uxTaskNumber++;
+			uxTaskNumber++;//任务数+1
 
-			if( pxTCB == pxCurrentTCB )
+			if( pxTCB == pxCurrentTCB )//判断任务删除的是不是自己
 			{
+				//删自己
 				/* A task is deleting itself.  This cannot complete within the
 				task itself, as a context switch to another task is required.
 				Place the task in the termination list.  The idle task will
 				check the termination list and free up any memory allocated by
 				the scheduler for the TCB and stack of the deleted task. */
+				//把任务添加到一个终止列表里
 				vListInsertEnd( &xTasksWaitingTermination, &( pxTCB->xStateListItem ) );
 
 				/* Increment the ucTasksDeleted variable so the idle task knows
 				there is a task that has been deleted and that it should therefore
 				check the xTasksWaitingTermination list. */
+				//删除计数器+1
 				++uxDeletedTasksWaitingCleanUp;
 
 				/* The pre-delete hook is primarily for the Windows simulator,
@@ -1173,30 +1184,35 @@ static void prvAddNewTaskToReadyList( TCB_t *pxNewTCB )
 				after which it is not possible to yield away from this task -
 				hence xYieldPending is used to latch that a context switch is
 				required. */
+				//执行删除前的钩子函数
 				portPRE_TASK_DELETE_HOOK( pxTCB, &xYieldPending );
 			}
 			else
 			{
+				//当前系统任务数-1
 				--uxCurrentNumberOfTasks;
+				//删除对应的任务控制块,释放内存
 				prvDeleteTCB( pxTCB );
 
 				/* Reset the next expected unblock time in case it referred to
 				the task that has just been deleted. */
+				//复位下一个要解锁任务的时间
 				prvResetNextTaskUnblockTime();
 			}
 
 			traceTASK_DELETE( pxTCB );
 		}
-		taskEXIT_CRITICAL();
+		taskEXIT_CRITICAL();//退出临界区
 
 		/* Force a reschedule if it is the currently running task that has just
 		been deleted. */
-		if( xSchedulerRunning != pdFALSE )
+		if( xSchedulerRunning != pdFALSE )//判断一下任务调度器有没有运行
 		{
-			if( pxTCB == pxCurrentTCB )
+			//任务调度器在运行
+			if( pxTCB == pxCurrentTCB )//如果删的是自己如果删的是自己
 			{
 				configASSERT( uxSchedulerSuspended == 0 );
-				portYIELD_WITHIN_API();
+				portYIELD_WITHIN_API();//任务切换
 			}
 			else
 			{
@@ -1792,26 +1808,26 @@ static void prvAddNewTaskToReadyList( TCB_t *pxNewTCB )
 
 		/* The parameter cannot be NULL as it is impossible to resume the
 		currently executing task. */
-		if( ( pxTCB != NULL ) && ( pxTCB != pxCurrentTCB ) )
+		if( ( pxTCB != NULL ) && ( pxTCB != pxCurrentTCB ) )//判断传入的任务句柄不是null也不是当前正在运行的任务
 		{
-			taskENTER_CRITICAL();
+			taskENTER_CRITICAL();//进入临界区
 			{
-				if( prvTaskIsTaskSuspended( pxTCB ) != pdFALSE )
+				if( prvTaskIsTaskSuspended( pxTCB ) != pdFALSE )//判断任务是不是被挂起的
 				{
 					traceTASK_RESUME( pxTCB );
 
 					/* The ready list can be accessed even if the scheduler is
 					suspended because this is inside a critical section. */
-					( void ) uxListRemove(  &( pxTCB->xStateListItem ) );
-					prvAddTaskToReadyList( pxTCB );
+					( void ) uxListRemove(  &( pxTCB->xStateListItem ) );//把任务从事件列表中移除
+					prvAddTaskToReadyList( pxTCB );//把任务添加到就绪列表里
 
 					/* A higher priority task may have just been resumed. */
-					if( pxTCB->uxPriority >= pxCurrentTCB->uxPriority )
+					if( pxTCB->uxPriority >= pxCurrentTCB->uxPriority )//如果恢复的任务的优先级比现在的任务优先级高
 					{
 						/* This yield may not cause the task just resumed to run,
 						but will leave the lists in the correct state for the
 						next yield. */
-						taskYIELD_IF_USING_PREEMPTION();
+						taskYIELD_IF_USING_PREEMPTION();//任务切换
 					}
 					else
 					{
@@ -1823,7 +1839,7 @@ static void prvAddNewTaskToReadyList( TCB_t *pxNewTCB )
 					mtCOVERAGE_TEST_MARKER();
 				}
 			}
-			taskEXIT_CRITICAL();
+			taskEXIT_CRITICAL();//退出临界区
 		}
 		else
 		{
@@ -3735,18 +3751,19 @@ static void prvCheckTasksWaitingTermination( void )
 
 #endif /* INCLUDE_vTaskDelete */
 /*-----------------------------------------------------------*/
-
+//复位下一个任务的解锁时间点
 static void prvResetNextTaskUnblockTime( void )
 {
 TCB_t *pxTCB;
 
-	if( listLIST_IS_EMPTY( pxDelayedTaskList ) != pdFALSE )
+	if( listLIST_IS_EMPTY( pxDelayedTaskList ) != pdFALSE )//检查延时列表是不是为空
 	{
+		
 		/* The new current delayed list is empty.  Set xNextTaskUnblockTime to
 		the maximum possible value so it is	extremely unlikely that the
 		if( xTickCount >= xNextTaskUnblockTime ) test will pass until
 		there is an item in the delayed list. */
-		xNextTaskUnblockTime = portMAX_DELAY;
+		xNextTaskUnblockTime = portMAX_DELAY;//是的话,下一个任务的解锁时间设置为最大
 	}
 	else
 	{
@@ -3754,6 +3771,9 @@ TCB_t *pxTCB;
 		the item at the head of the delayed list.  This is the time at
 		which the task at the head of the delayed list should be removed
 		from the Blocked state. */
+		/*
+		取出延时队列中队首元素的任务控制块,把它的状态列表的值赋值给xNextTaskUnblockTime,重新计算下
+		*/
 		( pxTCB ) = ( TCB_t * ) listGET_OWNER_OF_HEAD_ENTRY( pxDelayedTaskList );
 		xNextTaskUnblockTime = listGET_LIST_ITEM_VALUE( &( ( pxTCB )->xStateListItem ) );
 	}
