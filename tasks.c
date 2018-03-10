@@ -146,7 +146,20 @@ configIDLE_TASK_NAME in FreeRTOSConfig.h. */
 	} /* taskRECORD_READY_PRIORITY */
 
 	/*-----------------------------------------------------------*/
-
+/*
+软件法
+	uxTopReadyPriority直接代表最高优先级
+	
+	直接读取uxTopReadyPriority到uxTopPriority就可以了
+	
+	判断获取到的最高优先级对应的就绪列表是不是空的,空的说明没有其他任务,减一个优先级,
+	
+	继续检测其就绪列表空不空,直到找到不空的
+	
+	去到对应的最高优先级的就绪列表下面,获取下一个就绪态任务的任务控制块,保存到pxCurrentTCB
+	
+	把uxTopPriority赋值给uxTopReadyPriority
+*/
 	#define taskSELECT_HIGHEST_PRIORITY_TASK()															\
 	{																									\
 	UBaseType_t uxTopPriority = uxTopReadyPriority;														\
@@ -177,7 +190,22 @@ configIDLE_TASK_NAME in FreeRTOSConfig.h. */
 	/* If configUSE_PORT_OPTIMISED_TASK_SELECTION is 1 then task selection is
 	performed in a way that is tailored to the particular microcontroller
 	architecture being used. */
+/*
+硬件法
+	uxTopReadyPriority的每一个bit代表一个任务
+	
+	前导0指令寻找最高优先级portGET_HIGHEST_PRIORITY( uxTopPriority, uxTopReadyPriority ),找好以后放到uxTopPriority
+	
+	使用clz指令算出uxReadyPriorities前导零个数(从31位开始计算到第一个为1的bit位的0的个数)
+	uxReadyPriorities在这里,他的每一个bit代表一个优先级,bit0就是优先级0,以此类推
+	
+	当某一个优先级有就绪任务的话就将其对应的bit置1,也就是说最多32个优先级
+	假设某个任务,他的优先级为30,它处于最高优先级状态,对应30的前导0的个数就是1,那么31-1=30,也就可以得到就绪态任务的最高优先级就是30了
 
+
+	assert一下对应的优先级就绪列表的长度是大于0的
+	取出下一个同优先级的任务listGET_OWNER_OF_NEXT_ENTRY,返回对应的任务控制块到当前任务控制块
+*/
 	/* A port optimised version is provided.  Call the port defined macros. */
 	#define taskRECORD_READY_PRIORITY( uxPriority )	portRECORD_READY_PRIORITY( uxPriority, uxTopReadyPriority )
 
@@ -200,7 +228,7 @@ configIDLE_TASK_NAME in FreeRTOSConfig.h. */
 	or suspended list then it won't be in a ready list. */
    /*
    判断传入的任务控制块的优先级对应到就绪列表中的列表长度是不是0(还有没有其他任务)
-      如果相应的优先级下只有这么一个任务,那么去uxTopReadyPriority把要清除的优先级对应位清除了
+      如果相应的优先级下只有这么一个任务,那么去uxTopReadyPriority把要清除的优先级对应位清除了,说明现在没有其他任务要调度了
    */
 	#define taskRESET_READY_PRIORITY( uxPriority )														\
 	{																									\
@@ -278,8 +306,8 @@ typedef struct tskTaskControlBlock
 		xMPU_SETTINGS	xMPUSettings;		/*< The MPU settings are defined as part of the port layer.  THIS MUST BE THE SECOND MEMBER OF THE TCB STRUCT. */
 	#endif
 
-	ListItem_t			xStateListItem;	/*< The list that the state list item of a task is reference from denotes the state of that task (Ready, Blocked, Suspended ). */
-	ListItem_t			xEventListItem;		/*< Used to reference a task from an event list. */
+	ListItem_t			xStateListItem;	/*< 状态列表项 The list that the state list item of a task is reference from denotes the state of that task (Ready, Blocked, Suspended ). */
+	ListItem_t			xEventListItem;		/*< 事件列表项 Used to reference a task from an event list. */
 	UBaseType_t			uxPriority;			/*< The priority of the task.  0 is the lowest priority. */
 	StackType_t			*pxStack;			/*< Points to the start of the stack. */
 	char				pcTaskName[ configMAX_TASK_NAME_LEN ];/*< Descriptive name given to the task when created.  Facilitates debugging only. */ /*lint !e971 Unqualified char types are allowed for strings and single characters only. */
@@ -1649,23 +1677,25 @@ static void prvAddNewTaskToReadyList( TCB_t *pxNewTCB )
 
 #endif /* INCLUDE_vTaskPrioritySet */
 /*-----------------------------------------------------------*/
-
+//任务的挂起
 #if ( INCLUDE_vTaskSuspend == 1 )
 
 	void vTaskSuspend( TaskHandle_t xTaskToSuspend )
 	{
 	TCB_t *pxTCB;
 
-		taskENTER_CRITICAL();
+		taskENTER_CRITICAL();//进入临界区
 		{
 			/* If null is passed in here then it is the running task that is
 			being suspended. */
+			//获取任务控制块
 			pxTCB = prvGetTCBFromHandle( xTaskToSuspend );
 
 			traceTASK_SUSPEND( pxTCB );
 
 			/* Remove task from the ready/delayed list and place in the
 			suspended list. */
+			//任务是不是处于就绪态,处于就把任务从列表中移除
 			if( uxListRemove( &( pxTCB->xStateListItem ) ) == ( UBaseType_t ) 0 )
 			{
 				taskRESET_READY_PRIORITY( pxTCB->uxPriority );
@@ -1676,6 +1706,7 @@ static void prvAddNewTaskToReadyList( TCB_t *pxNewTCB )
 			}
 
 			/* Is the task waiting on an event also? */
+			//把任务从状态列表中移除
 			if( listLIST_ITEM_CONTAINER( &( pxTCB->xEventListItem ) ) != NULL )
 			{
 				( void ) uxListRemove( &( pxTCB->xEventListItem ) );
@@ -1684,7 +1715,7 @@ static void prvAddNewTaskToReadyList( TCB_t *pxNewTCB )
 			{
 				mtCOVERAGE_TEST_MARKER();
 			}
-
+			//把需要挂起的任务的状态列表项添加到挂起任务的列表
 			vListInsertEnd( &xSuspendedTaskList, &( pxTCB->xStateListItem ) );
 
 			#if( configUSE_TASK_NOTIFICATIONS == 1 )
@@ -1698,14 +1729,17 @@ static void prvAddNewTaskToReadyList( TCB_t *pxNewTCB )
 			}
 			#endif
 		}
+		//退出临界区
 		taskEXIT_CRITICAL();
-
+		//判断任务调度器是不是在运行
 		if( xSchedulerRunning != pdFALSE )
 		{
 			/* Reset the next expected unblock time in case it referred to the
 			task that is now in the Suspended state. */
+			//调度器正在运行
 			taskENTER_CRITICAL();
 			{
+				//复位一下,下一个任务的解锁时间点
 				prvResetNextTaskUnblockTime();
 			}
 			taskEXIT_CRITICAL();
@@ -1714,30 +1748,36 @@ static void prvAddNewTaskToReadyList( TCB_t *pxNewTCB )
 		{
 			mtCOVERAGE_TEST_MARKER();
 		}
-
+		///判断挂起的是自己吗?
 		if( pxTCB == pxCurrentTCB )
 		{
+			//是自己
 			if( xSchedulerRunning != pdFALSE )
 			{
+				//任务调度器运行了
 				/* The current task has just been suspended. */
 				configASSERT( uxSchedulerSuspended == 0 );
 				portYIELD_WITHIN_API();
 			}
 			else
 			{
+				//任务调度器没有运行
 				/* The scheduler is not running, but the task that was pointed
 				to by pxCurrentTCB has just been suspended and pxCurrentTCB
 				must be adjusted to point to a different task. */
+				//检测挂起列表中的当前任务长度是不是等于当前系统中所有任务的长度,也就是所有任务都挂起了
 				if( listCURRENT_LIST_LENGTH( &xSuspendedTaskList ) == uxCurrentNumberOfTasks )
 				{
 					/* No other tasks are ready, so set pxCurrentTCB back to
 					NULL so when the next task is created pxCurrentTCB will
 					be set to point to it no matter what its relative priority
 					is. */
+					//那只能给当前任务控制块赋值一个null了
 					pxCurrentTCB = NULL;
 				}
 				else
 				{
+					//查找下一个要运行的任务
 					vTaskSwitchContext();
 				}
 			}
@@ -2872,21 +2912,23 @@ BaseType_t xSwitchRequired = pdFALSE;
 
 #endif /* configUSE_APPLICATION_TASK_TAG */
 /*-----------------------------------------------------------*/
-
+//上下文切换,获取下一个要切换的任务
 void vTaskSwitchContext( void )
 {
+	//判断有没有挂起
 	if( uxSchedulerSuspended != ( UBaseType_t ) pdFALSE )
 	{
 		/* The scheduler is currently suspended - do not allow a context
 		switch. */
+		//任务调度器被挂起了,不能进行任务切换
 		xYieldPending = pdTRUE;
 	}
 	else
 	{
-		xYieldPending = pdFALSE;
+		xYieldPending = pdFALSE;//任务调度器没有被挂起
 		traceTASK_SWITCHED_OUT();
-
-		#if ( configGENERATE_RUN_TIME_STATS == 1 )
+		//查找下一个要运行的任务
+		#if ( configGENERATE_RUN_TIME_STATS == 1 )//有没有使能统计任务信息
 		{
 				#ifdef portALT_GET_RUN_TIME_COUNTER_VALUE
 					portALT_GET_RUN_TIME_COUNTER_VALUE( ulTotalRunTime );
@@ -2901,6 +2943,7 @@ void vTaskSwitchContext( void )
 				overflows.  The guard against negative values is to protect
 				against suspect run time stat counter implementations - which
 				are provided by the application, not the kernel. */
+				//当总运行时间>上一次任务切换进来的定时器时间,可以算出两次切换之间的间隔时间
 				if( ulTotalRunTime > ulTaskSwitchedInTime )
 				{
 					pxCurrentTCB->ulRunTimeCounter += ( ulTotalRunTime - ulTaskSwitchedInTime );
@@ -2909,15 +2952,17 @@ void vTaskSwitchContext( void )
 				{
 					mtCOVERAGE_TEST_MARKER();
 				}
-				ulTaskSwitchedInTime = ulTotalRunTime;
+				ulTaskSwitchedInTime = ulTotalRunTime;//更新上一次任务切换的时间
 		}
 		#endif /* configGENERATE_RUN_TIME_STATS */
 
 		/* Check for stack overflow, if configured. */
+		//检测堆栈溢出功能
 		taskCHECK_FOR_STACK_OVERFLOW();
 
 		/* Select a new task to run using either the generic C or port
 		optimised asm code. */
+		//选择新的任务(通用 OR 硬件)
 		taskSELECT_HIGHEST_PRIORITY_TASK();
 		traceTASK_SWITCHED_IN();
 
@@ -3755,6 +3800,11 @@ static void prvCheckTasksWaitingTermination( void )
 static void prvResetNextTaskUnblockTime( void )
 {
 TCB_t *pxTCB;
+//检查延时列表是不是为空
+//为空的话,下一个任务解锁时间直接赋最大值
+//否则
+//获取延时列表中列表头的元素的任务控制块.
+//把任务控制块的状态列表的值赋值给xNextTaskUnblockTime,重新计算下
 
 	if( listLIST_IS_EMPTY( pxDelayedTaskList ) != pdFALSE )//检查延时列表是不是为空
 	{

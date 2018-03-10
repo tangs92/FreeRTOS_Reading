@@ -461,47 +461,64 @@ __asm void xPortPendSVHandler( void )
 	extern vTaskSwitchContext;
 
 	PRESERVE8
-
+	//获取psp指针
 	mrs r0, psp
 	isb
 	/* Get the location of the current TCB. */
+	//获取当前任务的任务控制块地址
 	ldr	r3, =pxCurrentTCB
+	//拿到栈顶指针
 	ldr	r2, [r3]
 
 	/* Is the task using the FPU context?  If so, push high vfp registers. */
+	//判断有没有用fpu,有使用,手动保存他们的寄存器(s16-s31),其余自动入栈
+	/*
+		判断方法
+		将r14和0x10与,得到FPU的状态,结果会送到APSR->Z(进入异常处理后,它被置为CONTROL->FPCA(1表示当前上下文使用了浮点数指令,需要保存))
+		判断APSR->Z是不是置1,是的话执行下一条指令
+		如果是1,保存FPU的寄存器到堆栈
+	*/
 	tst r14, #0x10
 	it eq
 	vstmdbeq r0!, {s16-s31}
 
 	/* Save the core registers. */
+	//保存r4-r11, r14到堆栈
 	stmdb r0!, {r4-r11, r14}
 
 	/* Save the new top of stack into the first member of the TCB. */
+	//保存入栈完毕的栈顶指针到任务控制块存放栈顶指针的位置
 	str r0, [r2]
-
+	//把当前任务的任务控制块地址压栈,临时保存,防止vTaskSwitchContext修改它
 	stmdb sp!, {r0, r3}
 	mov r0, #configMAX_SYSCALL_INTERRUPT_PRIORITY
+	//关闭中断,进入临界区
 	msr basepri, r0
 	dsb
 	isb
+	//调用vTaskSwitchContext获取下一个需要运行的任务控制块地址,更新任务控制块
 	bl vTaskSwitchContext
 	mov r0, #0
 	msr basepri, r0
 	ldmia sp!, {r0, r3}
 
 	/* The first item in pxCurrentTCB is the task top of stack. */
+	//获取新任务的任务堆栈栈顶,存到r0
 	ldr r1, [r3]
 	ldr r0, [r1]
 
 	/* Pop the core registers. */
+	//让r4-r11, r14出栈
 	ldmia r0!, {r4-r11, r14}
 
 	/* Is the task using the FPU context?  If so, pop the high vfp registers
 	too. */
+	//判断有没有用fpu,有使用,手动恢复他们的寄存器(s16-s31),其余自动出栈
 	tst r14, #0x10
 	it eq
 	vldmiaeq r0!, {s16-s31}
 
+	//更新栈顶指针到psp
 	msr psp, r0
 	isb
 	#ifdef WORKAROUND_PMU_CM001 /* XMC4000 specific errata */
@@ -511,7 +528,7 @@ __asm void xPortPendSVHandler( void )
 			nop
 		#endif
 	#endif
-
+	//恢复到线程和psp模式,PC值便会恢复到即将运行的任务函数
 	bx r14
 }
 /*-----------------------------------------------------------*/
