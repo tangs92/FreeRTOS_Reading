@@ -261,6 +261,18 @@ __asm void vPortSVCHandler( void )
 	指令同步屏障
 	触发PendSVC异常vPortSVCHandler()
 */
+/*
+1.  将向量表重定位后的地址读到r0,地址保存在0xE000ED08
+2,3 将读到的地址对应的值(也就是MSP的初始值),保存到r0
+4.  把r0的值赋值到msp中
+5.  清除PRIMASK
+6.  清除FAULTMASK
+7.  数据同步屏障
+8.  指令同步屏障
+9.  触发svc中断
+10.  
+
+*/
 __asm void prvStartFirstTask( void )
 {
 	PRESERVE8
@@ -393,25 +405,25 @@ BaseType_t xPortStartScheduler( void )
 	}
 	#endif /* conifgASSERT_DEFINED */
 
-	/* Make PendSV and SysTick the lowest priority interrupts. */
+	/* PendSV and SysTick中断优先级最低 Make PendSV and SysTick the lowest priority interrupts. */
 	portNVIC_SYSPRI2_REG |= portNVIC_PENDSV_PRI;
 	portNVIC_SYSPRI2_REG |= portNVIC_SYSTICK_PRI;
 
 	/* Start the timer that generates the tick ISR.  Interrupts are disabled
 	here already. */
-	vPortSetupTimerInterrupt();
+	vPortSetupTimerInterrupt();//开定时器中断
 
 	/* Initialise the critical nesting count ready for the first task. */
-	uxCriticalNesting = 0;
+	uxCriticalNesting = 0;//嵌套计数器置0
 
 	/* Ensure the VFP is enabled - it should be anyway. */
-	prvEnableVFP();
+	prvEnableVFP();//CM4开VFP
 
 	/* Lazy save always. */
 	*( portFPCCR ) |= portASPEN_AND_LSPEN_BITS;
 
 	/* Start the first task. */
-	prvStartFirstTask();
+	prvStartFirstTask();//开启第一个任务
 
 	/* Should not get here! */
 	return 0;
