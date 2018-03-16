@@ -3237,10 +3237,11 @@ BaseType_t xReturn;
 	configASSERT( pxTimeOut );
 	configASSERT( pxTicksToWait );
 
-	taskENTER_CRITICAL();
+	taskENTER_CRITICAL();//进入临界区
 	{
 		/* Minor optimisation.  The tick count cannot change in this block. */
 		const TickType_t xConstTickCount = xTickCount;
+		//消耗的时间=当前系统时间-减去结构体进入时的时间
 		const TickType_t xElapsedTime = xConstTickCount - pxTimeOut->xTimeOnEntering;
 
 		#if( INCLUDE_xTaskAbortDelay == 1 )
@@ -3255,16 +3256,16 @@ BaseType_t xReturn;
 		#endif
 
 		#if ( INCLUDE_vTaskSuspend == 1 )
-			if( *pxTicksToWait == portMAX_DELAY )
+			if( *pxTicksToWait == portMAX_DELAY )//等待时间是最大值
 			{
 				/* If INCLUDE_vTaskSuspend is set to 1 and the block time
 				specified is the maximum block time then the task should block
 				indefinitely, and therefore never time out. */
-				xReturn = pdFALSE;
+				xReturn = pdFALSE;//返回未超时
 			}
 			else
 		#endif
-
+		//如果溢出次数不等于传入的溢出计数 而且 系统时钟大于结构体中存储的进入时间
 		if( ( xNumOfOverflows != pxTimeOut->xOverflowCount ) && ( xConstTickCount >= pxTimeOut->xTimeOnEntering ) ) /*lint !e525 Indentation preferred as is to make code within pre-processor directives clearer. */
 		{
 			/* The tick count is greater than the time at which
@@ -3272,22 +3273,27 @@ BaseType_t xReturn;
 			vTaskSetTimeOut() was called.  It must have wrapped all the way
 			around and gone past again. This passed since vTaskSetTimeout()
 			was called. */
+			//阻塞时间没有到
 			xReturn = pdTRUE;
 		}
 		else if( xElapsedTime < *pxTicksToWait ) /*lint !e961 Explicit casting is only redundant with some compilers, whereas others require it to prevent integer conversion errors. */
 		{
+			//消耗的时间小于等待的时间
 			/* Not a genuine timeout. Adjust parameters for time remaining. */
+			//更新等待的时间
 			*pxTicksToWait -= xElapsedTime;
+			//设置超时结构体
 			vTaskInternalSetTimeOutState( pxTimeOut );
+			//返回未超市
 			xReturn = pdFALSE;
 		}
 		else
 		{
-			*pxTicksToWait = 0;
-			xReturn = pdTRUE;
+			*pxTicksToWait = 0;//等待时间置0
+			xReturn = pdTRUE;//返回超时
 		}
 	}
-	taskEXIT_CRITICAL();
+	taskEXIT_CRITICAL();//退出临界区
 
 	return xReturn;
 }
