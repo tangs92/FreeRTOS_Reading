@@ -307,14 +307,14 @@ typedef struct tskTaskControlBlock
 		xMPU_SETTINGS	xMPUSettings;		/*< The MPU settings are defined as part of the port layer.  THIS MUST BE THE SECOND MEMBER OF THE TCB STRUCT. */
 	#endif
 
-	ListItem_t			xStateListItem;	/*< 状态列表项 The list that the state list item of a task is reference from denotes the state of that task (Ready, Blocked, Suspended ). */
+	ListItem_t			xStateListItem;	/*< 状态（就绪，阻塞，运行的状态）列表项 The list that the state list item of a task is reference from denotes the state of that task (Ready, Blocked, Suspended ). */
 	ListItem_t			xEventListItem;		/*< 事件列表项 Used to reference a task from an event list. */
-	UBaseType_t			uxPriority;			/*< The priority of the task.  0 is the lowest priority. */
-	StackType_t			*pxStack;			/*< Points to the start of the stack. */
-	char				pcTaskName[ configMAX_TASK_NAME_LEN ];/*< Descriptive name given to the task when created.  Facilitates debugging only. */ /*lint !e971 Unqualified char types are allowed for strings and single characters only. */
+	UBaseType_t			uxPriority;			/*< 任务的优先级The priority of the task.  0 is the lowest priority. */
+	StackType_t			*pxStack;			/*< 堆栈开始位置指针Points to the start of the stack. */
+	char				pcTaskName[ configMAX_TASK_NAME_LEN ];/*< 任务名Descriptive name given to the task when created.  Facilitates debugging only. */ /*lint !e971 Unqualified char types are allowed for strings and single characters only. */
 
 	#if ( ( portSTACK_GROWTH > 0 ) || ( configRECORD_STACK_HIGH_ADDRESS == 1 ) )
-		StackType_t		*pxEndOfStack;		/*< Points to the highest valid address for the stack. */
+		StackType_t		*pxEndOfStack;		/*< 栈顶指针Points to the highest valid address for the stack. */
 	#endif
 
 	#if ( portCRITICAL_NESTING_IN_TCB == 1 )
@@ -327,7 +327,7 @@ typedef struct tskTaskControlBlock
 	#endif
 
 	#if ( configUSE_MUTEXES == 1 )
-		UBaseType_t		uxBasePriority;		/*< The priority last assigned to the task - used by the priority inheritance mechanism. */
+		UBaseType_t		uxBasePriority;		/*< 基优先级 互斥信号量用的The priority last assigned to the task - used by the priority inheritance mechanism. */
 		UBaseType_t		uxMutexesHeld;
 	#endif
 
@@ -1252,7 +1252,11 @@ static void prvAddNewTaskToReadyList( TCB_t *pxNewTCB )
 
 #endif /* INCLUDE_vTaskDelete */
 /*-----------------------------------------------------------*/
-
+//绝对延时 
+//主调函数+延时任务的时间是确定的,可以实现周期性
+//第一次调用,需要将pxPreviousWakeTime初始化为进入while循环体的事件点的值
+//在后续的运行中,任务会自动更新这个pxPreviousWakeTime
+//xTimeIncrement是需要延时的时间
 #if ( INCLUDE_vTaskDelayUntil == 1 )
 
 	void vTaskDelayUntil( TickType_t * const pxPreviousWakeTime, const TickType_t xTimeIncrement )
@@ -1264,15 +1268,18 @@ static void prvAddNewTaskToReadyList( TCB_t *pxNewTCB )
 		configASSERT( ( xTimeIncrement > 0U ) );
 		configASSERT( uxSchedulerSuspended == 0 );
 
-		vTaskSuspendAll();
+		vTaskSuspendAll();//挂起任务调度器
 		{
 			/* Minor optimisation.  The tick count cannot change in this
 			block. */
-			const TickType_t xConstTickCount = xTickCount;
+			const TickType_t xConstTickCount = xTickCount;//记录下当前系统时间xConstTickCount
 
 			/* Generate the tick time at which the task wants to wake. */
+			/*计算唤醒时间xTimeToWake = pxPreviousWakeTime上一次唤醒的时间点+xTimeIncrement需要延时的时间*/
 			xTimeToWake = *pxPreviousWakeTime + xTimeIncrement;
-
+			/*
+				如果当前进入时刻xConstTickCount溢出[当前进入时刻xConstTickCount <  *pxPreviousWakeTime上一次唤醒的时间点 ]
+			*/
 			if( xConstTickCount < *pxPreviousWakeTime )
 			{
 				/* The tick count has overflowed since this function was
@@ -1280,9 +1287,15 @@ static void prvAddNewTaskToReadyList( TCB_t *pxNewTCB )
 				actually delay is if the wake time has also	overflowed,
 				and the wake time is greater than the tick time.  When this
 				is the case it is as if neither time had overflowed. */
+				/*
+				如果 
+				唤醒时间点xTimeToWake < pxPreviousWakeTime上一次唤醒的时间点 				
+				而且 
+				唤醒时间点xTimeToWake > 当前进入时刻xConstTickCount
+				*/
 				if( ( xTimeToWake < *pxPreviousWakeTime ) && ( xTimeToWake > xConstTickCount ) )
 				{
-					xShouldDelay = pdTRUE;
+					xShouldDelay = pdTRUE;//做一个标记可以延时
 				}
 				else
 				{
@@ -1291,12 +1304,13 @@ static void prvAddNewTaskToReadyList( TCB_t *pxNewTCB )
 			}
 			else
 			{
+				//否则说明 唤醒时间点xTimeToWake 溢出 或者 xConstTickCount和xTimeToWake都没有溢出
 				/* The tick time has not overflowed.  In this case we will
 				delay if either the wake time has overflowed, and/or the
 				tick time is less than the wake time. */
 				if( ( xTimeToWake < *pxPreviousWakeTime ) || ( xTimeToWake > xConstTickCount ) )
 				{
-					xShouldDelay = pdTRUE;
+					xShouldDelay = pdTRUE;////做一个标记可以延时
 				}
 				else
 				{
@@ -1305,14 +1319,17 @@ static void prvAddNewTaskToReadyList( TCB_t *pxNewTCB )
 			}
 
 			/* Update the wake time ready for the next call. */
+			//为了下一次延时，更新上一次的延时时间 
 			*pxPreviousWakeTime = xTimeToWake;
 
-			if( xShouldDelay != pdFALSE )
+			if( xShouldDelay != pdFALSE )//判断要不要延时
 			{
 				traceTASK_DELAY_UNTIL( xTimeToWake );
 
 				/* prvAddCurrentTaskToDelayedList() needs the block time, not
 				the time to wake, so subtract the current tick count. */
+				//当前任务添加到延时列表 
+				//添加的延时值 = 唤醒时间点xTimeToWake - 当前时间值xConstTickCount(动态变化的,主体任务变化而变化)
 				prvAddCurrentTaskToDelayedList( xTimeToWake - xConstTickCount, pdFALSE );
 			}
 			else
@@ -1320,13 +1337,13 @@ static void prvAddNewTaskToReadyList( TCB_t *pxNewTCB )
 				mtCOVERAGE_TEST_MARKER();
 			}
 		}
-		xAlreadyYielded = xTaskResumeAll();
+		xAlreadyYielded = xTaskResumeAll();//恢复任务调度器
 
 		/* Force a reschedule if xTaskResumeAll has not already done so, we may
 		have put ourselves to sleep. */
-		if( xAlreadyYielded == pdFALSE )
+		if( xAlreadyYielded == pdFALSE )//有没有任务切换
 		{
-			portYIELD_WITHIN_API();
+			portYIELD_WITHIN_API();//任务切换
 		}
 		else
 		{
@@ -1336,7 +1353,10 @@ static void prvAddNewTaskToReadyList( TCB_t *pxNewTCB )
 
 #endif /* INCLUDE_vTaskDelayUntil */
 /*-----------------------------------------------------------*/
-
+/*
+相对延时
+相对于调用它的主体函数而言的延时,并不周期
+*/
 #if ( INCLUDE_vTaskDelay == 1 )
 
 	void vTaskDelay( const TickType_t xTicksToDelay )
@@ -1344,10 +1364,10 @@ static void prvAddNewTaskToReadyList( TCB_t *pxNewTCB )
 	BaseType_t xAlreadyYielded = pdFALSE;
 
 		/* A delay time of zero just forces a reschedule. */
-		if( xTicksToDelay > ( TickType_t ) 0U )
+		if( xTicksToDelay > ( TickType_t ) 0U )//判断传入的时间是否大于0
 		{
 			configASSERT( uxSchedulerSuspended == 0 );
-			vTaskSuspendAll();
+			vTaskSuspendAll();//挂起任务调度器
 			{
 				traceTASK_DELAY();
 
@@ -1358,9 +1378,9 @@ static void prvAddNewTaskToReadyList( TCB_t *pxNewTCB )
 
 				This task cannot be in an event list as it is the currently
 				executing task. */
-				prvAddCurrentTaskToDelayedList( xTicksToDelay, pdFALSE );
+				prvAddCurrentTaskToDelayedList( xTicksToDelay, pdFALSE );//添加当前任务到延时列表
 			}
-			xAlreadyYielded = xTaskResumeAll();
+			xAlreadyYielded = xTaskResumeAll();//恢复任务调度器,记录是不是需要任务切换了
 		}
 		else
 		{
@@ -1369,9 +1389,9 @@ static void prvAddNewTaskToReadyList( TCB_t *pxNewTCB )
 
 		/* Force a reschedule if xTaskResumeAll has not already done so, we may
 		have put ourselves to sleep. */
-		if( xAlreadyYielded == pdFALSE )
+		if( xAlreadyYielded == pdFALSE )//判断需要任务切换吗
 		{
-			portYIELD_WITHIN_API();
+			portYIELD_WITHIN_API();//需要就执行任务切换
 		}
 		else
 		{
@@ -2190,9 +2210,9 @@ BaseType_t xAlreadyYielded = pdFALSE;
 	{
 		--uxSchedulerSuspended;//挂起嵌套计数器--
 
-		if( uxSchedulerSuspended == ( UBaseType_t ) pdFALSE )
+		if( uxSchedulerSuspended == ( UBaseType_t ) pdFALSE )//挂起嵌套计数器等于0的话，关闭调度器那里会让这个计数加1
 		{
-			if( uxCurrentNumberOfTasks > ( UBaseType_t ) 0U )//挂起嵌套计数器等于0的话
+			if( uxCurrentNumberOfTasks > ( UBaseType_t ) 0U )
 			{
 				/* Move any readied tasks from the pending list into the
 				appropriate ready list. */
@@ -5021,11 +5041,11 @@ TickType_t uxReturn;
 #endif /* configUSE_TASK_NOTIFICATIONS */
 /*-----------------------------------------------------------*/
 
-
+//添加当前任务到延时列表
 static void prvAddCurrentTaskToDelayedList( TickType_t xTicksToWait, const BaseType_t xCanBlockIndefinitely )
 {
 TickType_t xTimeToWake;
-const TickType_t xConstTickCount = xTickCount;
+const TickType_t xConstTickCount = xTickCount;//获取当前系统时钟值
 
 	#if( INCLUDE_xTaskAbortDelay == 1 )
 	{
@@ -5038,10 +5058,12 @@ const TickType_t xConstTickCount = xTickCount;
 
 	/* Remove the task from the ready list before adding it to the blocked list
 	as the same list item is used for both lists. */
+	//从就绪列表中移除当前正在运行的任务
 	if( uxListRemove( &( pxCurrentTCB->xStateListItem ) ) == ( UBaseType_t ) 0 )
 	{
 		/* The current task must be in a ready list, so there is no need to
 		check, and the port reset macro can be called directly. */
+		//相应的就绪位优先级就要清0
 		portRESET_READY_PRIORITY( pxCurrentTCB->uxPriority, uxTopReadyPriority );
 	}
 	else
@@ -5053,9 +5075,11 @@ const TickType_t xConstTickCount = xTickCount;
 	{
 		if( ( xTicksToWait == portMAX_DELAY ) && ( xCanBlockIndefinitely != pdFALSE ) )
 		{
+			//判断延时时间是不是等于最大值 而且 xCanBlockIndefinitely为真(允许阻塞任务)
 			/* Add the task to the suspended task list instead of a delayed task
 			list to ensure it is not woken by a timing event.  It will block
 			indefinitely. */
+			//任务直接就添加到挂起列表里,不用添加到延时列表里了
 			vListInsertEnd( &xSuspendedTaskList, &( pxCurrentTCB->xStateListItem ) );
 		}
 		else
@@ -5063,29 +5087,33 @@ const TickType_t xConstTickCount = xTickCount;
 			/* Calculate the time at which the task should be woken if the event
 			does not occur.  This may overflow but this doesn't matter, the
 			kernel will manage it correctly. */
+			//唤醒时间点xTimeToWake= 当前进入时刻xConstTickCount+等待的时刻xTicksToWait
 			xTimeToWake = xConstTickCount + xTicksToWait;
 
 			/* The list item will be inserted in wake time order. */
 			listSET_LIST_ITEM_VALUE( &( pxCurrentTCB->xStateListItem ), xTimeToWake );
 
-			if( xTimeToWake < xConstTickCount )
+			if( xTimeToWake < xConstTickCount )//判断唤醒时间点<当前时间点
 			{
 				/* Wake time has overflowed.  Place this item in the overflow
 				list. */
+				//说明唤醒时间溢出了,需要把任务添加到溢出延时列表里
 				vListInsert( pxOverflowDelayedTaskList, &( pxCurrentTCB->xStateListItem ) );
 			}
 			else
 			{
 				/* The wake time has not overflowed, so the current block list
 				is used. */
+				//没有溢出的情况,添加到正常的延时列表
 				vListInsert( pxDelayedTaskList, &( pxCurrentTCB->xStateListItem ) );
 
 				/* If the task entering the blocked state was placed at the
 				head of the list of blocked tasks then xNextTaskUnblockTime
 				needs to be updated too. */
+				//判断唤醒时间点<下一个需要唤醒的时间点
 				if( xTimeToWake < xNextTaskUnblockTime )
 				{
-					xNextTaskUnblockTime = xTimeToWake;
+					xNextTaskUnblockTime = xTimeToWake;//更新一下下一个需要唤醒的时间点
 				}
 				else
 				{
