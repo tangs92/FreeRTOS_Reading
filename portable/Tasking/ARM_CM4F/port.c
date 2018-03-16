@@ -233,16 +233,18 @@ void vPortExitCritical( void )
 	}
 }
 /*-----------------------------------------------------------*/
-
+//Systick中断函数
 void SysTick_Handler( void )
 {
 uint32_t ulDummy;
 
 	ulDummy = portSET_INTERRUPT_MASK_FROM_ISR();
 	{
+		//每一个滴答定时器中断中xTIckCount就会加1
 		if( xTaskIncrementTick() != pdFALSE )
 		{
 			/* Pend a context switch. */
+			//触发PendSV
 			*(portNVIC_INT_CTRL) = portNVIC_PENDSVSET;
 		}
 	}
