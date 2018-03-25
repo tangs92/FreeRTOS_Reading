@@ -3948,16 +3948,22 @@ TCB_t *pxTCB;
 		/* If the mutex was given back by an interrupt while the queue was
 		locked then the mutex holder might now be NULL.  _RB_ Is this still
 		needed as interrupts can no longer use mutexes? */
+	
 		if( pxMutexHolder != NULL )
 		{
 			/* If the holder of the mutex has a priority below the priority of
 			the task attempting to obtain the mutex then it will temporarily
 			inherit the priority of the task attempting to obtain the mutex. */
+			////先判断当前任务的优先级是否比正在拥有互斥信号量的优先级高
 			if( pxMutexHolderTCB->uxPriority < pxCurrentTCB->uxPriority )
 			{
+				//是的话会把拥有互斥信号量的低优先级任务的优先级调整为当前任务的优先级(高优先级),保持一致
+				
 				/* Adjust the mutex holder state to account for its new
 				priority.  Only reset the event list item value if the value is
 				not being used for anything else. */
+				//调整互斥信号量的持有者状态以便适应新的优先级
+				//当且仅当事件列表项的值没有被使用的情况下，复位该值
 				if( ( listGET_LIST_ITEM_VALUE( &( pxMutexHolderTCB->xEventListItem ) ) & taskEVENT_LIST_ITEM_VALUE_IN_USE ) == 0UL )
 				{
 					listSET_LIST_ITEM_VALUE( &( pxMutexHolderTCB->xEventListItem ), ( TickType_t ) configMAX_PRIORITIES - ( TickType_t ) pxCurrentTCB->uxPriority ); /*lint !e961 MISRA exception as the casts are only redundant for some ports. */
@@ -3969,6 +3975,7 @@ TCB_t *pxTCB;
 
 				/* If the task being modified is in the ready state it will need
 				to be moved into a new list. */
+				//如果任务处在就绪态，需要移动到新的列表
 				if( listIS_CONTAINED_WITHIN( &( pxReadyTasksLists[ pxMutexHolderTCB->uxPriority ] ), &( pxMutexHolderTCB->xStateListItem ) ) != pdFALSE )
 				{
 					if( uxListRemove( &( pxMutexHolderTCB->xStateListItem ) ) == ( UBaseType_t ) 0 )
@@ -3981,22 +3988,26 @@ TCB_t *pxTCB;
 					}
 
 					/* Inherit the priority before being moved into the new list. */
+					//修改优先级
 					pxMutexHolderTCB->uxPriority = pxCurrentTCB->uxPriority;
+					//插入就绪列表
 					prvAddTaskToReadyList( pxMutexHolderTCB );
 				}
 				else
 				{
 					/* Just inherit the priority. */
+					//不是就绪态的话，单纯的改优先级
 					pxMutexHolderTCB->uxPriority = pxCurrentTCB->uxPriority;
 				}
 
 				traceTASK_PRIORITY_INHERIT( pxMutexHolderTCB, pxCurrentTCB->uxPriority );
 
 				/* Inheritance occurred. */
-				xReturn = pdTRUE;
+				xReturn = pdTRUE;//返回true
 			}
 			else
 			{
+				//持有互斥信号量的任务的基优先级比当前任务的优先级低的话
 				if( pxMutexHolderTCB->uxBasePriority < pxCurrentTCB->uxPriority )
 				{
 					/* The base priority of the mutex holder is lower than the
@@ -4006,6 +4017,7 @@ TCB_t *pxTCB;
 					Therefore the mutex holder must have already inherited a
 					priority, but inheritance would have occurred if that had
 					not been the case. */
+					//说明优先级继承已经发生了
 					xReturn = pdTRUE;
 				}
 				else
@@ -4026,13 +4038,13 @@ TCB_t *pxTCB;
 /*-----------------------------------------------------------*/
 
 #if ( configUSE_MUTEXES == 1 )
-
+//优先级继承处理
 	BaseType_t xTaskPriorityDisinherit( TaskHandle_t const pxMutexHolder )
 	{
-	TCB_t * const pxTCB = ( TCB_t * ) pxMutexHolder;
+	TCB_t * const pxTCB = ( TCB_t * ) pxMutexHolder;//传入的pxMutexHolder表示拥有该互斥信号量的任务控制块
 	BaseType_t xReturn = pdFALSE;
 
-		if( pxMutexHolder != NULL )
+		if( pxMutexHolder != NULL )//判断此互斥信号量是不是被任务获取了(检查是不是NULL)
 		{
 			/* A task can only have an inherited priority if it holds the mutex.
 			If the mutex is held by a task then it cannot be given from an
@@ -4040,13 +4052,21 @@ TCB_t *pxTCB;
 			be the running state task. */
 			configASSERT( pxTCB == pxCurrentTCB );
 			configASSERT( pxTCB->uxMutexesHeld );
+			/*
+				单个任务可能获取多个互斥信号量,uxMutexesHeld用来标记当前任务获取到的互斥信号量的个数
+				每释放一次互斥信号量,uxMutexesHeld就减1
+			*/
 			( pxTCB->uxMutexesHeld )--;
 
 			/* Has the holder of the mutex inherited the priority of another
 			task? */
+			//基优先级就是任务上一次被赋予的优先级
+			/*判断是不是有优先级继承发生(当前任务的优先级不等于基优先级表示发生了该现象)*/
 			if( pxTCB->uxPriority != pxTCB->uxBasePriority )
 			{
 				/* Only disinherit if no other mutexes are held. */
+				//判断uxMutexesHeld是不是等于0（检测是不是获取到了最后一个互斥信号量）
+				/*如果还有其他的互斥信号量没有获取完,你那么就还不能处理,必须等到释放最后一个信号量的时候*/
 				if( pxTCB->uxMutexesHeld == ( UBaseType_t ) 0 )
 				{
 					/* A task can only have an inherited priority if it holds
@@ -4054,8 +4074,11 @@ TCB_t *pxTCB;
 					given from an interrupt, and if a mutex is given by the
 					holding task then it must be the running state task.  Remove
 					the holding task from the ready list. */
+					/*把当前任务先从就绪列表中移除,当优先级恢复为原来的优先级以后再重新加入到就绪列表中*/
 					if( uxListRemove( &( pxTCB->xStateListItem ) ) == ( UBaseType_t ) 0 )
 					{
+						/*如果任务继承来的这个优先级对应的就绪表中没有其他任务的话*/
+						/*将取消这个优先级的就绪态*/
 						taskRESET_READY_PRIORITY( pxTCB->uxPriority );
 					}
 					else
@@ -4065,12 +4088,15 @@ TCB_t *pxTCB;
 
 					/* Disinherit the priority before adding the task into the
 					new	ready list. */
+					//重新设置任务的优先级为任务的基优先级 uxBasePriority
 					traceTASK_PRIORITY_DISINHERIT( pxTCB, pxTCB->uxBasePriority );
 					pxTCB->uxPriority = pxTCB->uxBasePriority;
 
 					/* Reset the event list item value.  It cannot be in use for
 					any other purpose if this task is running, and it must be
 					running to give back the mutex. */
+					//复位任务的事件列表项
+					//将优先级恢复后的任务重新添加到任务就绪表中
 					listSET_LIST_ITEM_VALUE( &( pxTCB->xEventListItem ), ( TickType_t ) configMAX_PRIORITIES - ( TickType_t ) pxTCB->uxPriority ); /*lint !e961 MISRA exception as the casts are only redundant for some ports. */
 					prvAddTaskToReadyList( pxTCB );
 
@@ -4082,7 +4108,7 @@ TCB_t *pxTCB;
 					returned, even if a task was waiting on it, then a context
 					switch should occur when the last mutex is returned whether
 					a task is waiting on it or not. */
-					xReturn = pdTRUE;
+					xReturn = pdTRUE;//返回 pdTRUE，表示需要进行任务调度
 				}
 				else
 				{
@@ -4538,12 +4564,12 @@ TickType_t uxReturn;
 	{
 		/* If xSemaphoreCreateMutex() is called before any tasks have been created
 		then pxCurrentTCB will be NULL. */
-		if( pxCurrentTCB != NULL )
+		if( pxCurrentTCB != NULL )//判断当前任务控制块是不是非空
 		{
-			( pxCurrentTCB->uxMutexesHeld )++;
+			( pxCurrentTCB->uxMutexesHeld )++;//当前任务控制块中的uxMutexesHeld+1,表示获取到了一个互斥信号量
 		}
 
-		return pxCurrentTCB;
+		return pxCurrentTCB;//返回当前任务控制块
 	}
 
 #endif /* configUSE_MUTEXES */

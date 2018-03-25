@@ -481,15 +481,19 @@ static void prvInitialiseNewQueue( const UBaseType_t uxQueueLength, const UBaseT
 			correctly for a generic queue, but this function is creating a
 			mutex.  Overwrite those members that need to be set differently -
 			in particular the information required for priority inheritance. */
+			/*队列的尾部(用宏定义换了一个名字变成pxMutexHolder)需要设置为NULL用来表示互斥队列的所有者*/
 			pxNewQueue->pxMutexHolder = NULL;
+			/*队列的头部(用宏定义换了一个名字变成uxQueueType)用来表示队列的类型是互斥信号量*/
 			pxNewQueue->uxQueueType = queueQUEUE_IS_MUTEX;
 
 			/* In case this is a recursive mutex. */
+			/*如果是递归互斥信号量,还需要设置递归计数器*/
 			pxNewQueue->u.uxRecursiveCallCount = 0;
 
 			traceCREATE_MUTEX( pxNewQueue );
 
-			/* Start with the semaphore in the expected state. */
+			/* Start with the semaphore in the expected state.
+			/*创建完了以后就入队,使其有效*/
 			( void ) xQueueGenericSend( pxNewQueue, NULL, ( TickType_t ) 0U, queueSEND_TO_BACK );
 		}
 		else
@@ -608,6 +612,9 @@ static void prvInitialiseNewQueue( const UBaseType_t uxQueueLength, const UBaseT
 		this is the only condition we are interested in it does not matter if
 		pxMutexHolder is accessed simultaneously by another task.  Therefore no
 		mutual exclusion is required to test the pxMutexHolder variable. */
+		//检查递归互斥信号量是不是被当前任务获取的
+		//因为同互斥信号量一样，递归互斥信号量的获取和释放要在同一个任务中完成！
+		//如果当前正在运行的任务不是递归互斥信号量的拥有者就不能释放
 		if( pxMutex->pxMutexHolder == ( void * ) xTaskGetCurrentTaskHandle() ) /*lint !e961 Not a redundant cast as TaskHandle_t is a typedef. */
 		{
 			traceGIVE_MUTEX_RECURSIVE( pxMutex );
@@ -617,13 +624,17 @@ static void prvInitialiseNewQueue( const UBaseType_t uxQueueLength, const UBaseT
 			uxRecursiveCallCount is only modified by the mutex holder, and as
 			there can only be one, no mutual exclusion is required to modify the
 			uxRecursiveCallCount member. */
+			/*uxRecursiveCallCount用来表述信号量被获取的次数,由于可以多次获取多次释放,只有最后一次释放的时候才会调用入队函数释放*/
 			( pxMutex->u.uxRecursiveCallCount )--;
 
 			/* Has the recursive call count unwound to 0? */
+			//判断uxRecursiveCallCount是不是0
 			if( pxMutex->u.uxRecursiveCallCount == ( UBaseType_t ) 0 )
 			{
 				/* Return the mutex.  This will automatically unblock any other
 				task that might be waiting to access the mutex. */
+				//是0就说明是最后一次释放了
+				//可以解锁其他等待的任务了
 				( void ) xQueueGenericSend( pxMutex, NULL, queueMUTEX_GIVE_BLOCK_TIME, queueSEND_TO_BACK );
 			}
 			else
@@ -631,7 +642,7 @@ static void prvInitialiseNewQueue( const UBaseType_t uxQueueLength, const UBaseT
 				mtCOVERAGE_TEST_MARKER();
 			}
 
-			xReturn = pdPASS;
+			xReturn = pdPASS;//成功返回pass,失败返回fail
 		}
 		else
 		{
@@ -649,7 +660,7 @@ static void prvInitialiseNewQueue( const UBaseType_t uxQueueLength, const UBaseT
 /*-----------------------------------------------------------*/
 
 #if ( configUSE_RECURSIVE_MUTEXES == 1 )
-
+//获取递归互斥信号量
 	BaseType_t xQueueTakeMutexRecursive( QueueHandle_t xMutex, TickType_t xTicksToWait )
 	{
 	BaseType_t xReturn;
@@ -661,14 +672,17 @@ static void prvInitialiseNewQueue( const UBaseType_t uxQueueLength, const UBaseT
 		xQueueGiveMutexRecursive(). */
 
 		traceTAKE_MUTEX_RECURSIVE( pxMutex );
-
+		//判断当前要获取递归互斥信号量的任务是不是已经是递归互斥信号量的拥有者
+		//这一步就可以判断出当前任务是第一次获取递归互斥信号量还是重复获取
 		if( pxMutex->pxMutexHolder == ( void * ) xTaskGetCurrentTaskHandle() ) /*lint !e961 Cast is not redundant as TaskHandle_t is a typedef. */
 		{
-			( pxMutex->u.uxRecursiveCallCount )++;
-			xReturn = pdPASS;
+			( pxMutex->u.uxRecursiveCallCount )++;//如果是递归互斥信号量的拥有者，uxRecursiveCallCount+1
+			xReturn = pdPASS;//那么说明任务已经获取了递归互斥信号量，本次是重复获取递归互斥信号量
 		}
 		else
 		{
+			//不是递归互斥信号量的拥有者,而是第一次获取递归互斥信号量
+			//调用函数 xQueueSemaphoreTake()完成真正的获取过程
 			xReturn = xQueueSemaphoreTake( pxMutex, xTicksToWait );
 
 			/* pdPASS will only be returned if the mutex was successfully
@@ -676,6 +690,7 @@ static void prvInitialiseNewQueue( const UBaseType_t uxQueueLength, const UBaseT
 			before reaching here. */
 			if( xReturn != pdFAIL )
 			{
+				//第一次获取递归互斥信号量成功以后将 uxRecursiveCallCount +1
 				( pxMutex->u.uxRecursiveCallCount )++;
 			}
 			else
@@ -1451,7 +1466,7 @@ Queue_t * const pxQueue = ( Queue_t * ) xQueue;
 	}
 }
 /*-----------------------------------------------------------*/
-
+//获取(互斥)信号量（类似于出队函数）
 BaseType_t xQueueSemaphoreTake( QueueHandle_t xQueue, TickType_t xTicksToWait )
 {
 BaseType_t xEntryTimeSet = pdFALSE;
@@ -1499,12 +1514,15 @@ Queue_t * const pxQueue = ( Queue_t * ) xQueue;
 				messages waiting is the semaphore's count.  Reduce the count. */
 				pxQueue->uxMessagesWaiting = uxSemaphoreCount - ( UBaseType_t ) 1;
 
-				#if ( configUSE_MUTEXES == 1 )
+				#if ( configUSE_MUTEXES == 1 )//如果是互斥信号量
 				{
 					if( pxQueue->uxQueueType == queueQUEUE_IS_MUTEX )
 					{
 						/* Record the information required to implement
 						priority inheritance should it become necessary. */
+						/*
+						通过pvTaskIncrementMutexHeldCount函数来对pxMutexHolder赋值来标记互斥信号量的拥有者
+						*/
 						pxQueue->pxMutexHolder = ( int8_t * ) pvTaskIncrementMutexHeldCount(); /*lint !e961 Cast is not redundant as TaskHandle_t is a typedef. */
 					}
 					else
@@ -1587,12 +1605,14 @@ Queue_t * const pxQueue = ( Queue_t * ) xQueue;
 			{
 				traceBLOCKING_ON_QUEUE_RECEIVE( pxQueue );
 
-				#if ( configUSE_MUTEXES == 1 )
+				#if ( configUSE_MUTEXES == 1 )//如果是互斥信号量
 				{
 					if( pxQueue->uxQueueType == queueQUEUE_IS_MUTEX )
 					{
 						taskENTER_CRITICAL();
 						{
+							//函数执行到这里说明互斥信号量正在被其他任务占用
+							//调用vTaskPriorityInherit()来处理互斥信号量中的优先级继承问题
 							xInheritanceOccurred = xTaskPriorityInherit( ( void * ) pxQueue->pxMutexHolder );
 						}
 						taskEXIT_CRITICAL();
@@ -2136,8 +2156,8 @@ UBaseType_t uxMessagesWaiting;
 			{
 				//互斥信号量的处理
 				/* The mutex is no longer being held. */
-				xReturn = xTaskPriorityDisinherit( ( void * ) pxQueue->pxMutexHolder );
-				pxQueue->pxMutexHolder = NULL;
+				xReturn = xTaskPriorityDisinherit( ( void * ) pxQueue->pxMutexHolder );//处理优先级继承的问题
+				pxQueue->pxMutexHolder = NULL;//互斥信号量释放完毕后,pxMutexHolder就会指向NULL了
 			}
 			else
 			{
