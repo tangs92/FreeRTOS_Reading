@@ -3185,27 +3185,30 @@ TCB_t *pxUnblockedTCB;
 	configASSERT( uxSchedulerSuspended != pdFALSE );
 
 	/* Store the new item value in the event list. */
+	//传入的列表项的值写一个标记,告诉调度器它的列表项的值不能变
 	listSET_LIST_ITEM_VALUE( pxEventListItem, xItemValue | taskEVENT_LIST_ITEM_VALUE_IN_USE );
 
 	/* Remove the event list form the event flag.  Interrupts do not access
 	event flags. */
+	//获得当前列表项的任务控制块(也就是未解锁的任务控制块)
 	pxUnblockedTCB = ( TCB_t * ) listGET_LIST_ITEM_OWNER( pxEventListItem );
 	configASSERT( pxUnblockedTCB );
-	( void ) uxListRemove( pxEventListItem );
+	( void ) uxListRemove( pxEventListItem );//将传入的列表项移出列表
 
 	/* Remove the task from the delayed list and add it to the ready list.  The
 	scheduler is suspended so interrupts will not be accessing the ready
 	lists. */
-	( void ) uxListRemove( &( pxUnblockedTCB->xStateListItem ) );
-	prvAddTaskToReadyList( pxUnblockedTCB );
+	( void ) uxListRemove( &( pxUnblockedTCB->xStateListItem ) );//将当前列表项的任务从延时列表中移出
+	prvAddTaskToReadyList( pxUnblockedTCB );//将当前列表项的任务添加到就绪列表
 
+	//判断未解锁的任务控制块的任务的优先级 > 当前任务的优先级
 	if( pxUnblockedTCB->uxPriority > pxCurrentTCB->uxPriority )
 	{
 		/* The unblocked task has a priority above that of the calling task, so
 		a context switch is required.  This function is called with the
 		scheduler suspended so xYieldPending is set so the context switch
 		occurs immediately that the scheduler is resumed (unsuspended). */
-		xYieldPending = pdTRUE;
+		xYieldPending = pdTRUE;//返回True,告诉调用这个函数的调用者需要上下文切换
 	}
 }
 /*-----------------------------------------------------------*/

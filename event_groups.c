@@ -63,10 +63,12 @@ taskEVENT_LIST_ITEM_VALUE_IN_USE definition. */
 
 typedef struct xEventGroupDefinition
 {
-	EventBits_t uxEventBits;
+	EventBits_t uxEventBits;//事件标志组
+	//因为设置了事件标志组而进入了等待状态的任务列表
 	List_t xTasksWaitingForBits;		/*< List of tasks waiting for a bit to be set. */
 
 	#if( configUSE_TRACE_FACILITY == 1 )
+	//事件标志组的序号(调试用)
 		UBaseType_t uxEventGroupNumber;
 	#endif
 
@@ -142,14 +144,15 @@ static BaseType_t prvTestWaitCondition( const EventBits_t uxCurrentEventBits, co
 
 	EventGroupHandle_t xEventGroupCreate( void )
 	{
-	EventGroup_t *pxEventBits;
+	EventGroup_t *pxEventBits;//创建一个临时的事件标志组结构体pxEventBits,为其分配内存
 
 		/* Allocate the event group. */
 		pxEventBits = ( EventGroup_t * ) pvPortMalloc( sizeof( EventGroup_t ) );
 
-		if( pxEventBits != NULL )
+		if( pxEventBits != NULL )//如果分配成功
 		{
 			pxEventBits->uxEventBits = 0;
+			//xTasksWaitingForBits列表初始化
 			vListInitialise( &( pxEventBits->xTasksWaitingForBits ) );
 
 			#if( configSUPPORT_STATIC_ALLOCATION == 1 )
@@ -168,7 +171,7 @@ static BaseType_t prvTestWaitCondition( const EventBits_t uxCurrentEventBits, co
 			traceEVENT_GROUP_CREATE_FAILED();
 		}
 
-		return ( EventGroupHandle_t ) pxEventBits;
+		return ( EventGroupHandle_t ) pxEventBits;//返回创建好的事件标志组
 	}
 
 #endif /* configSUPPORT_DYNAMIC_ALLOCATION */
@@ -293,7 +296,7 @@ BaseType_t xTimeoutOccurred = pdFALSE;
 	return uxReturn;
 }
 /*-----------------------------------------------------------*/
-
+//等待事件标志组
 EventBits_t xEventGroupWaitBits( EventGroupHandle_t xEventGroup, const EventBits_t uxBitsToWaitFor, const BaseType_t xClearOnExit, const BaseType_t xWaitForAllBits, TickType_t xTicksToWait )
 {
 EventGroup_t *pxEventBits = ( EventGroup_t * ) xEventGroup;
@@ -312,55 +315,57 @@ BaseType_t xTimeoutOccurred = pdFALSE;
 	}
 	#endif
 
-	vTaskSuspendAll();
+	vTaskSuspendAll();//关闭调度器
 	{
-		const EventBits_t uxCurrentEventBits = pxEventBits->uxEventBits;
+		const EventBits_t uxCurrentEventBits = pxEventBits->uxEventBits;//拿到当前的事件标志组uxCurrentEventBits
 
 		/* Check to see if the wait condition is already met or not. */
 		xWaitConditionMet = prvTestWaitCondition( uxCurrentEventBits, uxBitsToWaitFor, xWaitForAllBits );
 
-		if( xWaitConditionMet != pdFALSE )
+		if( xWaitConditionMet != pdFALSE )//检查要等待的事件标志组是不是已经满足了
 		{
+			//满足
 			/* The wait condition has already been met so there is no need to
 			block. */
-			uxReturn = uxCurrentEventBits;
-			xTicksToWait = ( TickType_t ) 0;
+			uxReturn = uxCurrentEventBits;//返回值就是当前的事件标志组
+			xTicksToWait = ( TickType_t ) 0;//阻塞时间为0
 
 			/* Clear the wait bits if requested to do so. */
-			if( xClearOnExit != pdFALSE )
+			if( xClearOnExit != pdFALSE )//判断退出后要不要清除事件标志
 			{
-				pxEventBits->uxEventBits &= ~uxBitsToWaitFor;
+				pxEventBits->uxEventBits &= ~uxBitsToWaitFor;//清除要等待的事件标志位
 			}
 			else
 			{
 				mtCOVERAGE_TEST_MARKER();
 			}
 		}
-		else if( xTicksToWait == ( TickType_t ) 0 )
+		else if( xTicksToWait == ( TickType_t ) 0 )//否则如果阻塞时间为0
 		{
 			/* The wait condition has not been met, but no block time was
 			specified, so just return the current value. */
-			uxReturn = uxCurrentEventBits;
+			uxReturn = uxCurrentEventBits;//返回值就是当前的事件标志组
 			xTimeoutOccurred = pdTRUE;
 		}
 		else
 		{
+			//否则,说明需要阻塞任务
 			/* The task is going to block to wait for its required bits to be
 			set.  uxControlBits are used to remember the specified behaviour of
 			this call to xEventGroupWaitBits() - for use when the event bits
 			unblock the task. */
-			if( xClearOnExit != pdFALSE )
+			if( xClearOnExit != pdFALSE )//判断需不需要退出后清除指定事件标志
 			{
-				uxControlBits |= eventCLEAR_EVENTS_ON_EXIT_BIT;
+				uxControlBits |= eventCLEAR_EVENTS_ON_EXIT_BIT;//给uxControlBits控制位写标记
 			}
 			else
 			{
 				mtCOVERAGE_TEST_MARKER();
 			}
 
-			if( xWaitForAllBits != pdFALSE )
+			if( xWaitForAllBits != pdFALSE )//判断需不需要等待所有的事件标志位置1
 			{
-				uxControlBits |= eventWAIT_FOR_ALL_BITS;
+				uxControlBits |= eventWAIT_FOR_ALL_BITS;//给uxControlBits控制位写标记
 			}
 			else
 			{
@@ -370,21 +375,25 @@ BaseType_t xTimeoutOccurred = pdFALSE;
 			/* Store the bits that the calling task is waiting for in the
 			task's event list item so the kernel knows when a match is
 			found.  Then enter the blocked state. */
+			/*
+				这个函数的作用就是把写好标志(外加调度器不会修改列表项的标志)的列表项插入到事件标志组中的等待任务列表的末尾
+				再把当前任务以指定的阻塞时长加入到延时列表
+			*/
 			vTaskPlaceOnUnorderedEventList( &( pxEventBits->xTasksWaitingForBits ), ( uxBitsToWaitFor | uxControlBits ), xTicksToWait );
 
 			/* This is obsolete as it will get set after the task unblocks, but
 			some compilers mistakenly generate a warning about the variable
 			being returned without being set if it is not done. */
-			uxReturn = 0;
+			uxReturn = 0;//返回值为0;
 
 			traceEVENT_GROUP_WAIT_BITS_BLOCK( xEventGroup, uxBitsToWaitFor );
 		}
 	}
-	xAlreadyYielded = xTaskResumeAll();
+	xAlreadyYielded = xTaskResumeAll();//开调度器,返回一个值会告诉你要不要上下文切换
 
-	if( xTicksToWait != ( TickType_t ) 0 )
+	if( xTicksToWait != ( TickType_t ) 0 )//如果阻塞的时间不为0
 	{
-		if( xAlreadyYielded == pdFALSE )
+		if( xAlreadyYielded == pdFALSE )//判断要不要切换任务
 		{
 			portYIELD_WITHIN_API();
 		}
@@ -397,21 +406,32 @@ BaseType_t xTimeoutOccurred = pdFALSE;
 		point either the required bits were set or the block time expired.  If
 		the required bits were set they will have been stored in the task's
 		event list item, and they should now be retrieved then cleared. */
+		/*
+		函数uxTaskResetEventItemValue作用		
+			任务被阻塞以等待指定的位被置1(等待指定的位被置1或超时)
+			如果需要的位被置1了,会被写到任务的列表项中,此时就需要把它还原并清掉			
+		函数内容
+			取出当前任务的列表项值作为返回值
+			把当前任务的列表项值恢复成正常的状态
+		*/
 		uxReturn = uxTaskResetEventItemValue();
-
+		//如果上面的返回值(事件标志)中没有调度器不会修改列表项的标志
 		if( ( uxReturn & eventUNBLOCKED_DUE_TO_BIT_SET ) == ( EventBits_t ) 0 )
 		{
-			taskENTER_CRITICAL();
+			taskENTER_CRITICAL();//进入临界区
 			{
 				/* The task timed out, just return the current event bit value. */
+				//说明任务超时了,返回值改成当前的任务事件标志
 				uxReturn = pxEventBits->uxEventBits;
 
 				/* It is possible that the event bits were updated between this
 				task leaving the Blocked state and running again. */
+				//检查要等待的事件标志组是不是已经满足了
 				if( prvTestWaitCondition( uxReturn, uxBitsToWaitFor, xWaitForAllBits ) != pdFALSE )
 				{
-					if( xClearOnExit != pdFALSE )
+					if( xClearOnExit != pdFALSE )//如果需要退出后清标志
 					{
+						//清标志
 						pxEventBits->uxEventBits &= ~uxBitsToWaitFor;
 					}
 					else
@@ -433,14 +453,14 @@ BaseType_t xTimeoutOccurred = pdFALSE;
 		}
 
 		/* The task blocked so control bits may have been set. */
-		uxReturn &= ~eventEVENT_BITS_CONTROL_BYTES;
+		uxReturn &= ~eventEVENT_BITS_CONTROL_BYTES;//返回值(事件标志)的控制位部分清0
 	}
 	traceEVENT_GROUP_WAIT_BITS_END( xEventGroup, uxBitsToWaitFor, xTimeoutOccurred );
 
 	/* Prevent compiler warnings when trace macros are not used. */
 	( void ) xTimeoutOccurred;
 
-	return uxReturn;
+	return uxReturn;//返回 返回值
 }
 /*-----------------------------------------------------------*/
 
@@ -454,18 +474,20 @@ EventBits_t uxReturn;
 	configASSERT( xEventGroup );
 	configASSERT( ( uxBitsToClear & eventEVENT_BITS_CONTROL_BYTES ) == 0 );
 
-	taskENTER_CRITICAL();
+	taskENTER_CRITICAL();//进临界区
 	{
 		traceEVENT_GROUP_CLEAR_BITS( xEventGroup, uxBitsToClear );
 
 		/* The value returned is the event group value prior to the bits being
 		cleared. */
+		//返回清除之前的事件标志组
 		uxReturn = pxEventBits->uxEventBits;
 
 		/* Clear the bits. */
+		////清除指定位的事件标志
 		pxEventBits->uxEventBits &= ~uxBitsToClear;
 	}
-	taskEXIT_CRITICAL();
+	taskEXIT_CRITICAL();//出临界区
 
 	return uxReturn;
 }
@@ -516,33 +538,42 @@ BaseType_t xMatchFound = pdFALSE;
 	configASSERT( xEventGroup );
 	configASSERT( ( uxBitsToSet & eventEVENT_BITS_CONTROL_BYTES ) == 0 );
 
-	pxList = &( pxEventBits->xTasksWaitingForBits );
+	pxList = &( pxEventBits->xTasksWaitingForBits );//取出事件标志组的等待任务列表pxList
+	//取出列表中最后一个列表项pxListEnd
 	pxListEnd = listGET_END_MARKER( pxList ); /*lint !e826 !e740 The mini list structure is used as the list end to save RAM.  This is checked and valid. */
-	vTaskSuspendAll();
+	vTaskSuspendAll();//关调度器
 	{
 		traceEVENT_GROUP_SET_BITS( xEventGroup, uxBitsToSet );
 
-		pxListItem = listGET_HEAD_ENTRY( pxList );
+		pxListItem = listGET_HEAD_ENTRY( pxList );//取出列表中第一个列表项pxListItem
 
-		/* Set the bits. */
+		/* 设置指定位的事件标志组 Set the bits. */
 		pxEventBits->uxEventBits |= uxBitsToSet;
 
 		/* See if the new bit value should unblock any tasks. */
+		//循环检测新设置好的事件标志组会不会解锁某个任务  首任务!=尾任务
 		while( pxListItem != pxListEnd )
 		{
-			pxNext = listGET_NEXT( pxListItem );
+			pxNext = listGET_NEXT( pxListItem );//取出首任务的下一个任务pxNext
+			//取出第一个列表项pxListItem的列表项的值uxBitsWaitedFor(也就是任务的事件标志组)
 			uxBitsWaitedFor = listGET_LIST_ITEM_VALUE( pxListItem );
+			//设置一个标志xMatchFound为false
 			xMatchFound = pdFALSE;
 
 			/* Split the bits waited for from the control bits. */
+			//取出控制位uxControlBits(取出uxBitsWaitedFor的高8位)
 			uxControlBits = uxBitsWaitedFor & eventEVENT_BITS_CONTROL_BYTES;
+			//取出设置完了的uxBitsWaitedFor(取出uxBitsWaitedFor的低24位)(也就是任务的事件标志组)
 			uxBitsWaitedFor &= ~eventEVENT_BITS_CONTROL_BYTES;
-
+			//如果不选择等待所有位置1（(等待所有标志置位的标志)是0的话）
 			if( ( uxControlBits & eventWAIT_FOR_ALL_BITS ) == ( EventBits_t ) 0 )
 			{
+				//如果设置完了的任务的事件标志组uxBitsWaitedFor & 刚刚设置好的事件标志组pxEventBits->uxEventBits 不等于0
 				/* Just looking for single bit being set. */
 				if( ( uxBitsWaitedFor & pxEventBits->uxEventBits ) != ( EventBits_t ) 0 )
 				{
+					/*单个位置位的情况吧,这么说明有可能这个过程中事件标志组中有位被修改,所以造成了不一致的情况~~~*/
+					//说明有置位的情况发生
 					xMatchFound = pdTRUE;
 				}
 				else
@@ -550,21 +581,26 @@ BaseType_t xMatchFound = pdFALSE;
 					mtCOVERAGE_TEST_MARKER();
 				}
 			}
+			//如果任务的事件标志组 & 刚刚设置好的事件标志组 等于 任务的事件标志组
 			else if( ( uxBitsWaitedFor & pxEventBits->uxEventBits ) == uxBitsWaitedFor )
 			{
 				/* All bits are set. */
+				//说明所有等待的位都置1了
 				xMatchFound = pdTRUE;
 			}
 			else
 			{
+				//否则说明需要设置所有的位,但是个别位没有置1
 				/* Need all bits to be set, but not all the bits were set. */
 			}
 
-			if( xMatchFound != pdFALSE )
+			if( xMatchFound != pdFALSE )//如果xMatchFound为True(说明有位被置1)
 			{
 				/* The bits match.  Should the bits be cleared on exit? */
+				//判断需不需要在退出时清除掉事件标志组
 				if( ( uxControlBits & eventCLEAR_EVENTS_ON_EXIT_BIT ) != ( EventBits_t ) 0 )
 				{
+					//需要清除的位uxBitsToClear设置为uxBitsWaitedFor
 					uxBitsToClear |= uxBitsWaitedFor;
 				}
 				else
@@ -577,22 +613,24 @@ BaseType_t xMatchFound = pdFALSE;
 				eventUNBLOCKED_DUE_TO_BIT_SET bit is set so the task knows
 				that is was unblocked due to its required bits matching, rather
 				than because it timed out. */
+				/*在任务移出事件列表之前,存储任务列表项中实际的事件标志组
+				写eventUNBLOCKED_DUE_TO_BIT_SET表示任务是由于事件标志组中的位匹配上了而解锁的,而不是超时*/
 				vTaskRemoveFromUnorderedEventList( pxListItem, pxEventBits->uxEventBits | eventUNBLOCKED_DUE_TO_BIT_SET );
 			}
 
 			/* Move onto the next list item.  Note pxListItem->pxNext is not
 			used here as the list item may have been removed from the event list
 			and inserted into the ready/pending reading list. */
-			pxListItem = pxNext;
+			pxListItem = pxNext;//移动到下一个列表项pxListItem = pxNext;
 		}
 
 		/* Clear any bits that matched when the eventCLEAR_EVENTS_ON_EXIT_BIT
 		bit was set in the control word. */
-		pxEventBits->uxEventBits &= ~uxBitsToClear;
+		pxEventBits->uxEventBits &= ~uxBitsToClear;//如果设置了退出前清除事件标志组,那么就清除对应的事件标志组
 	}
-	( void ) xTaskResumeAll();
+	( void ) xTaskResumeAll();//开调度器
 
-	return pxEventBits->uxEventBits;
+	return pxEventBits->uxEventBits;//返回事件标志组中的事件标志组的值
 }
 /*-----------------------------------------------------------*/
 
