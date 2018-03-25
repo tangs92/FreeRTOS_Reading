@@ -55,7 +55,16 @@ task.h is included from an application file. */
 #endif
 
 /*-----------------------------------------------------------*/
-
+/*
+Heap3 特性
+	对标准C中的函数 malloc()和free()的简单封装
+		使用编译器提供的内存堆
+		具有不确定性
+		增加代码量
+		heap_3 中 configTOTAL_HEAP_SIZE
+	
+	就是简单的在malloc和free前后添加了调度器锁机制,确保线程安全
+*/
 void *pvPortMalloc( size_t xWantedSize )
 {
 void *pvReturn;

@@ -74,6 +74,15 @@ typedef struct A_BLOCK_LINK
 } BlockLink_t;
 
 /*-----------------------------------------------------------*/
+/*
+Heap4 
+带有内存块合并机制的分配算法
+适合以下场景
+	需要重复创建和删除任务、队列、信号量和互斥信号量等的应用
+	不会像 heap_2 那样产生严重的内存碎片，即使分配的内存大小是随机的
+	具有不确定性，但是远比 C 标准库中的 malloc()和 free()效率高
+
+*/
 
 /*
  * Inserts a block of memory that is being freed into the correct position in
@@ -116,13 +125,13 @@ void *pvPortMalloc( size_t xWantedSize )
 BlockLink_t *pxBlock, *pxPreviousBlock, *pxNewBlockLink;
 void *pvReturn = NULL;
 
-	vTaskSuspendAll();
+	vTaskSuspendAll();//关调度器
 	{
 		/* If this is the first call to malloc then the heap will require
 		initialisation to setup the list of free blocks. */
-		if( pxEnd == NULL )
+		if( pxEnd == NULL )//没有初始化的话
 		{
-			prvHeapInit();
+			prvHeapInit();//初始化内存堆
 		}
 		else
 		{
@@ -133,19 +142,21 @@ void *pvReturn = NULL;
 		set.  The top bit of the block size member of the BlockLink_t structure
 		is used to determine who owns the block - the application or the
 		kernel, so it must be free. */
-		if( ( xWantedSize & xBlockAllocatedBit ) == 0 )
+		if( ( xWantedSize & xBlockAllocatedBit ) == 0 )//判断内存有没有被使用
 		{
+			//需要申请的内存块大小的最高位不能为 1，因为最高位用来表示内存块有没有被使用
 			/* The wanted size is increased so it can contain a BlockLink_t
 			structure in addition to the requested amount of bytes. */
 			if( xWantedSize > 0 )
 			{
-				xWantedSize += xHeapStructSize;
+				xWantedSize += xHeapStructSize;//需要的内存大小加上结构体的大小
 
 				/* Ensure that blocks are always aligned to the required number
 				of bytes. */
-				if( ( xWantedSize & portBYTE_ALIGNMENT_MASK ) != 0x00 )
+				if( ( xWantedSize & portBYTE_ALIGNMENT_MASK ) != 0x00 )//判断有没有8字节对齐
 				{
 					/* Byte alignment required. */
+					//没有的话,修正需要的内存大小
 					xWantedSize += ( portBYTE_ALIGNMENT - ( xWantedSize & portBYTE_ALIGNMENT_MASK ) );
 					configASSERT( ( xWantedSize & portBYTE_ALIGNMENT_MASK ) == 0 );
 				}
@@ -159,12 +170,13 @@ void *pvReturn = NULL;
 				mtCOVERAGE_TEST_MARKER();
 			}
 
-			if( ( xWantedSize > 0 ) && ( xWantedSize <= xFreeBytesRemaining ) )
+			if( ( xWantedSize > 0 ) && ( xWantedSize <= xFreeBytesRemaining ) )//判断需要的内存大小没有超过极值
 			{
 				/* Traverse the list from the start	(lowest address) block until
 				one	of adequate size is found. */
 				pxPreviousBlock = &xStart;
 				pxBlock = xStart.pxNextFreeBlock;
+				//从xStart(内存块最小)开始，while查找大小满足所需要内存的内存块
 				while( ( pxBlock->xBlockSize < xWantedSize ) && ( pxBlock->pxNextFreeBlock != NULL ) )
 				{
 					pxPreviousBlock = pxBlock;
@@ -173,7 +185,7 @@ void *pvReturn = NULL;
 
 				/* If the end marker was reached then a block of adequate size
 				was	not found. */
-				if( pxBlock != pxEnd )
+				if( pxBlock != pxEnd )//如果找到的内存块不能是表尾
 				{
 					/* Return the memory space pointed to - jumping over the
 					BlockLink_t structure at its start. */
@@ -185,8 +197,9 @@ void *pvReturn = NULL;
 
 					/* If the block is larger than required it can be split into
 					two. */
-					if( ( pxBlock->xBlockSize - xWantedSize ) > heapMINIMUM_BLOCK_SIZE )
+					if( ( pxBlock->xBlockSize - xWantedSize ) > heapMINIMUM_BLOCK_SIZE )//如果拿到的块的大小-实际需要的大小>(阈值)heapMINIMUM_BLOCK_SIZE
 					{
+						//为了避免浪费,就需要把内存分两部分,留下需要的部分,把多余的部分放回空闲内存列表
 						/* This block is to be split into two.  Create a new
 						block following the number of bytes requested. The void
 						cast is used to prevent byte alignment warnings from the
@@ -207,11 +220,11 @@ void *pvReturn = NULL;
 						mtCOVERAGE_TEST_MARKER();
 					}
 
-					xFreeBytesRemaining -= pxBlock->xBlockSize;
+					xFreeBytesRemaining -= pxBlock->xBlockSize;//更新可用剩余内存大小
 
-					if( xFreeBytesRemaining < xMinimumEverFreeBytesRemaining )
+					if( xFreeBytesRemaining < xMinimumEverFreeBytesRemaining )//如果可用剩余内存大小<最小可用剩余内存大小
 					{
-						xMinimumEverFreeBytesRemaining = xFreeBytesRemaining;
+						xMinimumEverFreeBytesRemaining = xFreeBytesRemaining;//最小可用剩余内存大小赋值为可用剩余内存大小
 					}
 					else
 					{
@@ -220,8 +233,8 @@ void *pvReturn = NULL;
 
 					/* The block is being returned - it is allocated and owned
 					by the application and has no "next" block. */
-					pxBlock->xBlockSize |= xBlockAllocatedBit;
-					pxBlock->pxNextFreeBlock = NULL;
+					pxBlock->xBlockSize |= xBlockAllocatedBit;//把内存块大小的最高位的使用标志写上
+					pxBlock->pxNextFreeBlock = NULL;//把内存块的下一个空闲块指针写NULL
 				}
 				else
 				{
@@ -240,9 +253,9 @@ void *pvReturn = NULL;
 
 		traceMALLOC( pvReturn, xWantedSize );
 	}
-	( void ) xTaskResumeAll();
+	( void ) xTaskResumeAll();//开调度器
 
-	#if( configUSE_MALLOC_FAILED_HOOK == 1 )
+	#if( configUSE_MALLOC_FAILED_HOOK == 1 )//分配失败钩子函数
 	{
 		if( pvReturn == NULL )
 		{
@@ -257,20 +270,20 @@ void *pvReturn = NULL;
 	#endif
 
 	configASSERT( ( ( ( size_t ) pvReturn ) & ( size_t ) portBYTE_ALIGNMENT_MASK ) == 0 );
-	return pvReturn;
+	return pvReturn;//返回分配的内存首地址
 }
 /*-----------------------------------------------------------*/
 
 void vPortFree( void *pv )
 {
-uint8_t *puc = ( uint8_t * ) pv;
+uint8_t *puc = ( uint8_t * ) pv;//获取需要释放的内存的地址
 BlockLink_t *pxLink;
 
 	if( pv != NULL )
 	{
 		/* The memory being freed will have an BlockLink_t structure immediately
 		before it. */
-		puc -= xHeapStructSize;
+		puc -= xHeapStructSize;//地址退回开头的结构体的大小到起始位置
 
 		/* This casting is to keep the compiler from issuing warnings. */
 		pxLink = ( void * ) puc;
@@ -279,14 +292,20 @@ BlockLink_t *pxLink;
 		configASSERT( ( pxLink->xBlockSize & xBlockAllocatedBit ) != 0 );
 		configASSERT( pxLink->pxNextFreeBlock == NULL );
 
-		if( ( pxLink->xBlockSize & xBlockAllocatedBit ) != 0 )
+		if( ( pxLink->xBlockSize & xBlockAllocatedBit ) != 0 )//判断该内存块是不是使用过的 检测大小最高位
 		{
-			if( pxLink->pxNextFreeBlock == NULL )
+			if( pxLink->pxNextFreeBlock == NULL )//判断pxNextFreeBlock是不是NULL
 			{
 				/* The block is being returned to the heap - it is no longer
 				allocated. */
 				pxLink->xBlockSize &= ~xBlockAllocatedBit;
-
+				/*
+					最高位标记清0
+					关调度器
+					更新剩余内存计数
+					把空闲内存块放回去
+					开调度器				
+				*/
 				vTaskSuspendAll();
 				{
 					/* Add this block to the list of free blocks. */
@@ -337,15 +356,16 @@ size_t xTotalHeapSize = configTOTAL_HEAP_SIZE;
 	/* Ensure the heap starts on a correctly aligned boundary. */
 	uxAddress = ( size_t ) ucHeap;
 
-	if( ( uxAddress & portBYTE_ALIGNMENT_MASK ) != 0 )
+	if( ( uxAddress & portBYTE_ALIGNMENT_MASK ) != 0 )//内存堆需要做8字节对齐处理吗?
 	{
+		//处理下内存堆起始位置
 		uxAddress += ( portBYTE_ALIGNMENT - 1 );
 		uxAddress &= ~( ( size_t ) portBYTE_ALIGNMENT_MASK );
 		xTotalHeapSize -= uxAddress - ( size_t ) ucHeap;
 	}
 
 	pucAlignedHeap = ( uint8_t * ) uxAddress;
-
+	//处理开头和结尾
 	/* xStart is used to hold a pointer to the first item in the list of free
 	blocks.  The void cast is used to prevent compiler warnings. */
 	xStart.pxNextFreeBlock = ( void * ) pucAlignedHeap;
@@ -362,15 +382,19 @@ size_t xTotalHeapSize = configTOTAL_HEAP_SIZE;
 
 	/* To start with there is a single free block that is sized to take up the
 	entire heap space, minus the space taken by pxEnd. */
+	//开始的时候将内存堆整个可用空间看成一个空闲内存块
 	pxFirstFreeBlock = ( void * ) pucAlignedHeap;
 	pxFirstFreeBlock->xBlockSize = uxAddress - ( size_t ) pxFirstFreeBlock;
 	pxFirstFreeBlock->pxNextFreeBlock = pxEnd;
 
 	/* Only one block exists - and it covers the entire usable heap space. */
+	//记录最小的那个空闲内存块大小
 	xMinimumEverFreeBytesRemaining = pxFirstFreeBlock->xBlockSize;
+	//剩余空闲内存堆大小
 	xFreeBytesRemaining = pxFirstFreeBlock->xBlockSize;
 
 	/* Work out the position of the top bit in a size_t variable. */
+	//待会遍历会用xBlockSize的最高位来标记内存块的使用情况,把掩码算出来
 	xBlockAllocatedBit = ( ( size_t ) 1 ) << ( ( sizeof( size_t ) * heapBITS_PER_BYTE ) - 1 );
 }
 /*-----------------------------------------------------------*/
@@ -382,6 +406,7 @@ uint8_t *puc;
 
 	/* Iterate through the list until a block is found that has a higher address
 	than the block being inserted. */
+//遍历空闲内存块链表,找出内存块插入点,内存块是按照地址从低到高连接在一起
 	for( pxIterator = &xStart; pxIterator->pxNextFreeBlock < pxBlockToInsert; pxIterator = pxIterator->pxNextFreeBlock )
 	{
 		/* Nothing to do here, just iterate to the right position. */
@@ -389,11 +414,11 @@ uint8_t *puc;
 
 	/* Do the block being inserted, and the block it is being inserted after
 	make a contiguous block of memory? */
-	puc = ( uint8_t * ) pxIterator;
-	if( ( puc + pxIterator->xBlockSize ) == ( uint8_t * ) pxBlockToInsert )
+	puc = ( uint8_t * ) pxIterator;//取出插入点地址pxIterator
+	if( ( puc + pxIterator->xBlockSize ) == ( uint8_t * ) pxBlockToInsert )//如果插入点内存块的尾地址 如果 恰好等于 要插入的内存块的首地址
 	{
-		pxIterator->xBlockSize += pxBlockToInsert->xBlockSize;
-		pxBlockToInsert = pxIterator;
+		pxIterator->xBlockSize += pxBlockToInsert->xBlockSize;//合并内存块的大小
+		pxBlockToInsert = pxIterator;//合并两个内存块的地址
 	}
 	else
 	{
@@ -402,22 +427,27 @@ uint8_t *puc;
 
 	/* Do the block being inserted, and the block it is being inserted before
 	make a contiguous block of memory? */
-	puc = ( uint8_t * ) pxBlockToInsert;
+	puc = ( uint8_t * ) pxBlockToInsert;//取出需要插入的内存块的地址pxBlockToInsert
+	//检查新内存块的尾地址 如果 恰好等于 插入点后面的内存块的地址
 	if( ( puc + pxBlockToInsert->xBlockSize ) == ( uint8_t * ) pxIterator->pxNextFreeBlock )
 	{
+		//如果等于 
+		//如果没有到尾结构体的话
 		if( pxIterator->pxNextFreeBlock != pxEnd )
 		{
 			/* Form one big block from the two blocks. */
-			pxBlockToInsert->xBlockSize += pxIterator->pxNextFreeBlock->xBlockSize;
+			pxBlockToInsert->xBlockSize += pxIterator->pxNextFreeBlock->xBlockSize;//合并内存块的大小
+			//合并两个内存块的地址,这里要跳过合并之前的那个内存块到下一个空闲内存块
 			pxBlockToInsert->pxNextFreeBlock = pxIterator->pxNextFreeBlock->pxNextFreeBlock;
 		}
 		else
 		{
-			pxBlockToInsert->pxNextFreeBlock = pxEnd;
+			pxBlockToInsert->pxNextFreeBlock = pxEnd;//直接把新内存块接上插入点后面的内存块就好
 		}
 	}
 	else
 	{
+		//如果不能合并的话，就直接把新内存块接上后面的内存块就好
 		pxBlockToInsert->pxNextFreeBlock = pxIterator->pxNextFreeBlock;
 	}
 
@@ -425,9 +455,9 @@ uint8_t *puc;
 	before and the block after, then it's pxNextFreeBlock pointer will have
 	already been set, and should not be set here as that would make it point
 	to itself. */
-	if( pxIterator != pxBlockToInsert )
+	if( pxIterator != pxBlockToInsert )//在内存块插入过程中没有进行过一次内存合并的话
 	{
-		pxIterator->pxNextFreeBlock = pxBlockToInsert;
+		pxIterator->pxNextFreeBlock = pxBlockToInsert;//直接接上
 	}
 	else
 	{

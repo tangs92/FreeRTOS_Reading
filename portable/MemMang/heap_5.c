@@ -129,7 +129,13 @@ space. */
 static size_t xBlockAllocatedBit = 0;
 
 /*-----------------------------------------------------------*/
-
+/*
+Heap_5
+基于heap_4,就是多了支持不连续内存段的功能,可以有多个内存堆区域,然后合并起来的功能
+多了一个vPortDefineHeapRegions函数来合并多个内存段
+调用之前指向该函数,执行完之前禁止调用动态内存分配
+多了一个内存区域结构体 HeapRegion_t(在portable.h)
+*/
 void *pvPortMalloc( size_t xWantedSize )
 {
 BlockLink_t *pxBlock, *pxPreviousBlock, *pxNewBlockLink;
